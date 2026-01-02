@@ -1,54 +1,12 @@
 import numpy as np
 import time
+from .fixed_k_dp import ssq, ssq_matrix
 
 
-def ssq(j, i, sum_x, sum_x_sq):
-    """
-    Compute SSE for segment [j, i] using precomputed cumulative sums.
-    Time: O(1)
-    """
-    if j > 0:
-        muji = (sum_x[i] - sum_x[j - 1]) / (i - j + 1)
-        sji = sum_x_sq[i] - sum_x_sq[j - 1] - (i - j + 1) * muji ** 2
-    else:
-        sji = sum_x_sq[i] - sum_x[i] ** 2 / (i + 1)
-
-    return 0 if sji < 0 else sji
-
-
-def ssq_matrix_lazy(j, i, sum_x_matrix, n):
-    """
-    PRIORITY 1: Compute SSE matrix on-the-fly without storing all n×n matrices.
-    
-    Time: O(n²) per call
-    Space: O(n²) for return value only
-    """
-    if j > 0:
-        indicator_i = sum_x_matrix[i]
-        indicator_j_minus_1 = sum_x_matrix[j - 1]
-        indicator_diff = indicator_i - indicator_j_minus_1
-        
-        segment_length = i - j + 1
-        muji_matrix = indicator_diff / segment_length
-        
-        outer_product_i = np.dot(indicator_i, indicator_i.T)
-        outer_product_j = np.dot(indicator_j_minus_1, indicator_j_minus_1.T)
-        
-        dji_matrix = (outer_product_i - outer_product_j 
-                      - segment_length * np.dot(muji_matrix, muji_matrix.T))
-    else:
-        indicator_i = sum_x_matrix[i]
-        segment_length = i + 1
-        outer_product_i = np.dot(indicator_i, indicator_i.T)
-        dji_matrix = outer_product_i - (outer_product_i / segment_length)
-    
-    return dji_matrix
-
-
-def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive', 
+def fill_dp_matrix_optimized_1(data, S, J, K, n, constraint_mode='competitive', 
                                   tolerance=1e-10, relative_threshold=0.01):
     """
-    PRIORITY 1 + PRIORITY 2: Lazy matrix computation + selective constraint storage.
+    IMPROVEMENT 1: Selective constraint storage.
     
     New parameters:
         constraint_mode: How to select which constraints to store
@@ -64,8 +22,7 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
             - Default 0.01 means store if alternative is within 1% of optimal
     
     Memory improvements:
-    - Priority 1: O(n³) → O(n²) from lazy matrix computation
-    - Priority 2: Reduces number of constraints by 50-90% depending on mode
+    - Reduces number of constraints by 50-90% depending on mode
     
     Returns:
         list_condition_matrix: Reduced set of constraint matrices
@@ -85,8 +42,9 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
     sum_x = np.zeros(n, dtype=np.float64)
     sum_x_sq = np.zeros(n, dtype=np.float64)
 
-    # Only store indicator vectors (not full matrices)
+    # Store indicator vectors and matrices (as in original)
     sum_x_matrix = []
+    sum_x_sq_matrix = []
 
     shift = 0
 
@@ -103,6 +61,7 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
             e_n_0 = e_n_0.reshape((n, 1))
 
             sum_x_matrix.append(e_n_0)
+            sum_x_sq_matrix.append(np.dot(e_n_0, e_n_0.T))
 
         else:
             sum_x[i] = sum_x[i - 1] + data[i] - shift
@@ -113,11 +72,12 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
             e_n_i = e_n_i.reshape((n, 1))
 
             sum_x_matrix.append(sum_x_matrix[i - 1] + e_n_i)
+            sum_x_sq_matrix.append(sum_x_sq_matrix[i - 1] + np.dot(e_n_i, e_n_i.T))
 
         S[0][i] = ssq(0, i, sum_x, sum_x_sq)
         J[0][i] = 0
 
-        list_matrix.append(ssq_matrix_lazy(0, i, sum_x_matrix, n))
+        list_matrix.append(ssq_matrix(0, i, sum_x_matrix, sum_x_sq_matrix))
 
     # ============================================
     # PHASE 2: Forward DP (k=1 to K-1)
@@ -141,7 +101,7 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
             S[k][i] = S[k - 1][i - 1]
             J[k][i] = i
 
-            # PRIORITY 2: Store alternatives with their costs for selective storage
+            # IMPROVEMENT 1: Store alternatives with their costs for selective storage
             alternatives = []  # List of (matrix, cost, j) tuples
 
             matrix_Y = list_matrix[i - 1]
@@ -155,7 +115,7 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
                 SSQ_j = sji + S[k - 1][j - 1]
 
                 matrix_Y = list_matrix[j - 1]
-                matrix_Z = ssq_matrix_lazy(j, i, sum_x_matrix, n)
+                matrix_Z = ssq_matrix(j, i, sum_x_matrix, sum_x_sq_matrix)
                 matrix_Y_plus_Z = matrix_Y + matrix_Z
                 
                 alternatives.append((matrix_Y_plus_Z, SSQ_j, j))
@@ -166,7 +126,7 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
                     new_list_matrix[i] = matrix_Y_plus_Z
 
             # ============================================
-            # PRIORITY 2: SELECTIVE CONSTRAINT STORAGE
+            # IMPROVEMENT 1: SELECTIVE CONSTRAINT STORAGE
             # ============================================
             matrix_X = new_list_matrix[i]
             optimal_cost = S[k][i]
@@ -236,11 +196,11 @@ def fill_dp_matrix_optimized_p2(data, S, J, K, n, constraint_mode='competitive',
     return list_condition_matrix, constraint_stats
 
 
-def dp_si_optimized_p2(data, n_segments, constraint_mode='competitive', 
+def dp_si_optimized_1(data, n_segments, constraint_mode='competitive', 
                         tolerance=1e-10, relative_threshold=0.01, 
                         verbose=False):
     """
-    PRIORITY 1 + PRIORITY 2: Optimized DP with lazy computation and selective constraints.
+    IMPROVEMENT 1: Optimized DP with selective constraint storage.
     
     Args:
         data: Input time series of length n
@@ -265,7 +225,7 @@ def dp_si_optimized_p2(data, n_segments, constraint_mode='competitive',
     S = np.zeros((n_segments, n))
     J = np.zeros((n_segments, n))
 
-    list_condition_matrix, constraint_stats = fill_dp_matrix_optimized_p2(
+    list_condition_matrix, constraint_stats = fill_dp_matrix_optimized_1(
         data, S, J, n_segments, n,
         constraint_mode=constraint_mode,
         tolerance=tolerance,
@@ -354,7 +314,7 @@ def compare_constraint_modes(data, n_segments):
     
     for mode, description, params in modes:
         start = time.time()
-        seg_idx, constraints, changepoints, stats = dp_si_optimized_p2(
+        seg_idx, constraints, changepoints, stats = dp_si_optimized_1(
             data, n_segments, 
             constraint_mode=mode,
             verbose=False,
@@ -396,45 +356,4 @@ def compare_constraint_modes(data, n_segments):
     print(f"{'='*70}\n")
     
     return results
-
-
-if __name__ == "__main__":
-    print("="*70)
-    print("PRIORITY 2 IMPLEMENTATION: SELECTIVE CONSTRAINT STORAGE")
-    print("="*70)
-    
-    # Test on simple example
-    print("\nSimple Example:")
-    print("-"*70)
-    data = [1, 1, 1, 5, 5, 5]
-    K = 2
-    
-    print(f"Data: {data}")
-    print(f"Segments: {K}")
-    
-    seg, constraints, cp, stats = dp_si_optimized_p2(
-        data, K, 
-        constraint_mode='competitive',
-        relative_threshold=0.01,
-        verbose=True
-    )
-    
-    print(f"Detected changepoints: {cp}")
-    print(f"Number of constraints stored: {len(constraints)}")
-    
-    # Compare different modes
-    print("\n" + "="*70)
-    print("MODE COMPARISON")
-    print("="*70)
-    
-    # Generate larger test data
-    np.random.seed(42)
-    n = 100
-    test_data = np.concatenate([
-        np.random.normal(1, 0.3, 33),
-        np.random.normal(3, 0.3, 33),
-        np.random.normal(5, 0.3, 34)
-    ])
-    
-    compare_constraint_modes(test_data, K=3)
 

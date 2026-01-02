@@ -1,10 +1,11 @@
 import numpy as np
 import time
+from .fixed_k_dp import ssq_matrix
 
 
 def ssq_vectorized(j_array, i, sum_x, sum_x_sq):
     """
-    PRIORITY 3: Vectorized computation of SSE for multiple segments at once.
+    IMPROVEMENT 2: Vectorized computation of SSE for multiple segments at once.
     
     Computes SSE(j, i) for all j in j_array simultaneously.
     
@@ -50,40 +51,12 @@ def ssq_vectorized(j_array, i, sum_x, sum_x_sq):
     return sse_array
 
 
-def ssq_matrix_lazy(j, i, sum_x_matrix, n):
-    """
-    PRIORITY 1: Compute SSE matrix on-the-fly without storing all n×n matrices.
-    (Same as before - not vectorized because it's only called for selected j's)
-    """
-    if j > 0:
-        indicator_i = sum_x_matrix[i]
-        indicator_j_minus_1 = sum_x_matrix[j - 1]
-        indicator_diff = indicator_i - indicator_j_minus_1
-        
-        segment_length = i - j + 1
-        muji_matrix = indicator_diff / segment_length
-        
-        outer_product_i = np.dot(indicator_i, indicator_i.T)
-        outer_product_j = np.dot(indicator_j_minus_1, indicator_j_minus_1.T)
-        
-        dji_matrix = (outer_product_i - outer_product_j 
-                      - segment_length * np.dot(muji_matrix, muji_matrix.T))
-    else:
-        indicator_i = sum_x_matrix[i]
-        segment_length = i + 1
-        outer_product_i = np.dot(indicator_i, indicator_i.T)
-        dji_matrix = outer_product_i - (outer_product_i / segment_length)
-    
-    return dji_matrix
-
-
-def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive', 
+def fill_dp_matrix_optimized_2(data, S, J, K, n, constraint_mode='competitive', 
                                   tolerance=1e-10, relative_threshold=0.01):
     """
-    PRIORITY 1 + PRIORITY 2 + PRIORITY 3:
-    Lazy matrix computation + selective constraints + vectorization
+    IMPROVEMENT 2: Selective constraint storage + vectorization
     
-    NEW in Priority 3:
+    Key optimizations:
     - Vectorized SSE computation for all candidate j's at once
     - Faster min/argmin operations
     - Reduced Python loop overhead
@@ -105,7 +78,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
         'reduction_by_level': [],
     }
     
-    # Timing statistics (Priority 3)
+    # Timing statistics (Improvement 2)
     timing_stats = {
         'precomputation': 0,
         'initialization': 0,
@@ -120,6 +93,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
     sum_x = np.zeros(n, dtype=np.float64)
     sum_x_sq = np.zeros(n, dtype=np.float64)
     sum_x_matrix = []
+    sum_x_sq_matrix = []
 
     shift = 0
 
@@ -138,6 +112,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
             e_n_0 = e_n_0.reshape((n, 1))
 
             sum_x_matrix.append(e_n_0)
+            sum_x_sq_matrix.append(np.dot(e_n_0, e_n_0.T))
 
         else:
             sum_x[i] = sum_x[i - 1] + data[i] - shift
@@ -148,6 +123,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
             e_n_i = e_n_i.reshape((n, 1))
 
             sum_x_matrix.append(sum_x_matrix[i - 1] + e_n_i)
+            sum_x_sq_matrix.append(sum_x_sq_matrix[i - 1] + np.dot(e_n_i, e_n_i.T))
 
         # Compute initial SSE (can use vectorized version but not much gain here)
         if i == 0:
@@ -156,7 +132,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
             S[0][i] = max(0, sum_x_sq[i] - sum_x[i] ** 2 / (i + 1))
         
         J[0][i] = 0
-        list_matrix.append(ssq_matrix_lazy(0, i, sum_x_matrix, n))
+        list_matrix.append(ssq_matrix(0, i, sum_x_matrix, sum_x_sq_matrix))
     
     timing_stats['initialization'] = time.time() - start_init
 
@@ -183,7 +159,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
             J[k][i] = i
 
             # ============================================
-            # PRIORITY 3: VECTORIZED SSE COMPUTATION
+            # IMPROVEMENT 2: VECTORIZED SSE COMPUTATION
             # ============================================
             
             # Generate all candidate j values
@@ -214,7 +190,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
                 J[k][i] = optimal_j
             
             # ============================================
-            # CONSTRAINT GENERATION (Priority 2)
+            # CONSTRAINT GENERATION (Improvement 1)
             # ============================================
             
             # Build alternatives list efficiently
@@ -259,7 +235,7 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
                 # Only compute matrix if we'll use it
                 if should_compute_matrix or j == optimal_j:
                     matrix_Y = list_matrix[j - 1] if j > 0 else list_matrix[0]
-                    matrix_Z = ssq_matrix_lazy(j, i, sum_x_matrix, n)
+                    matrix_Z = ssq_matrix(j, i, sum_x_matrix, sum_x_sq_matrix)
                     matrix_Y_plus_Z = matrix_Y + matrix_Z
                     
                     if j == optimal_j:
@@ -322,19 +298,18 @@ def fill_dp_matrix_optimized_p3(data, S, J, K, n, constraint_mode='competitive',
     return list_condition_matrix, constraint_stats, timing_stats
 
 
-def dp_si_optimized_p3(data, n_segments, constraint_mode='competitive', 
+def dp_si_optimized_2(data, n_segments, constraint_mode='competitive', 
                         tolerance=1e-10, relative_threshold=0.01, 
                         verbose=False, show_timing=False):
     """
-    PRIORITY 1 + PRIORITY 2 + PRIORITY 3:
-    Optimized DP with lazy computation, selective constraints, and vectorization.
+    IMPROVEMENT 2: Optimized DP with selective constraints and vectorization.
     
-    NEW in Priority 3:
+    Key optimizations:
     - show_timing: Display detailed timing breakdown
     
-    Expected improvements over P1+P2:
-    - Speed: 5-10× faster for DP phase
-    - Memory: Same as P1+P2
+    Expected improvements over Improvement 1:
+    - Speed: 5-10× faster for DP phase (from vectorization)
+    - Memory: Same as Improvement 1
     - Results: Identical
     
     Args:
@@ -344,7 +319,7 @@ def dp_si_optimized_p3(data, n_segments, constraint_mode='competitive',
         tolerance: Absolute tolerance for numerical comparisons
         relative_threshold: For 'competitive' mode
         verbose: Print constraint reduction statistics
-        show_timing: Print detailed timing breakdown (Priority 3)
+        show_timing: Print detailed timing breakdown (Improvement 2)
     
     Returns:
         segment_index: Array indicating which segment each point belongs to
@@ -359,7 +334,7 @@ def dp_si_optimized_p3(data, n_segments, constraint_mode='competitive',
 
     start_total = time.time()
     
-    list_condition_matrix, constraint_stats, timing_stats = fill_dp_matrix_optimized_p3(
+    list_condition_matrix, constraint_stats, timing_stats = fill_dp_matrix_optimized_2(
         data, S, J, n_segments, n,
         constraint_mode=constraint_mode,
         tolerance=tolerance,
@@ -420,9 +395,9 @@ def print_constraint_stats(stats):
 
 
 def print_timing_stats(timing, n, K):
-    """Print detailed timing breakdown (Priority 3)."""
+    """Print detailed timing breakdown (Improvement 2)."""
     print(f"\n{'='*60}")
-    print("TIMING BREAKDOWN (Priority 3)")
+    print("TIMING BREAKDOWN (Improvement 2)")
     print(f"{'='*60}")
     print(f"Problem size: n={n}, K={K}")
     print(f"{'-'*60}")
@@ -438,12 +413,12 @@ def print_timing_stats(timing, n, K):
 # Comparison and Benchmarking
 # ============================================
 
-def benchmark_all_priorities(data, n_segments, num_trials=3):
+def benchmark_all_improvements(data, n_segments, num_trials=3):
     """
-    Benchmark all priority levels: Original, P1, P1+P2, P1+P2+P3.
+    Benchmark all improvement levels: Original, I1, I2, I1+I2.
     """
     print(f"\n{'='*70}")
-    print(f"BENCHMARK ALL PRIORITIES: n={len(data)}, K={n_segments}")
+    print(f"BENCHMARK ALL IMPROVEMENTS: n={len(data)}, K={n_segments}")
     print(f"{'='*70}\n")
     
     results = []
@@ -458,23 +433,16 @@ def benchmark_all_priorities(data, n_segments, num_trials=3):
     except ImportError:
         print("Warning: Original implementation not found")
     
-    # P1
+    # I1
     try:
-        from core_dp_si.fixed_k_dp_optimized import dp_si_optimized
-        implementations.append(('P1 (lazy)', dp_si_optimized, {}))
-    except ImportError:
-        print("Warning: P1 implementation not found")
-    
-    # P1+P2
-    try:
-        from core_dp_si.fixed_k_dp_optimized_p2 import dp_si_optimized_p2
-        implementations.append(('P1+P2 (selective)', dp_si_optimized_p2, 
+        from core_dp_si.fixed_k_dp_optimized_1 import dp_si_optimized_p2
+        implementations.append(('I1 (selective)', dp_si_optimized_p2, 
                                {'constraint_mode': 'competitive', 'relative_threshold': 0.01}))
     except ImportError:
-        print("Warning: P1+P2 implementation not found")
+        print("Warning: I1 implementation not found")
     
-    # P1+P2+P3
-    implementations.append(('P1+P2+P3 (vectorized)', dp_si_optimized_p3,
+    # I2
+    implementations.append(('I2 (selective + vectorized)', dp_si_optimized_2,
                            {'constraint_mode': 'competitive', 'relative_threshold': 0.01}))
     
     # Run benchmarks
@@ -539,41 +507,4 @@ def benchmark_all_priorities(data, n_segments, num_trials=3):
                   f"{r['constraints']:<12} {check}")
         
         print()
-
-
-if __name__ == "__main__":
-    print("="*70)
-    print("PRIORITY 3 IMPLEMENTATION: VECTORIZATION")
-    print("="*70)
-    
-    # Test on simple example
-    print("\nSimple Example:")
-    print("-"*70)
-    data = [1, 1, 1, 5, 5, 5]
-    K = 2
-    
-    seg, const, cp, stats = dp_si_optimized_p3(
-        data, K,
-        constraint_mode='competitive',
-        relative_threshold=0.01,
-        verbose=True,
-        show_timing=True
-    )
-    
-    print(f"Detected changepoints: {cp}")
-    print(f"Number of constraints stored: {len(const)}")
-    
-    # Benchmark on larger data
-    print(f"\n{'='*70}")
-    print("BENCHMARK: Comparing all priority levels")
-    print(f"{'='*70}")
-    
-    np.random.seed(42)
-    test_data = np.concatenate([
-        np.random.normal(1, 0.3, 67),
-        np.random.normal(3, 0.3, 66),
-        np.random.normal(5, 0.3, 67)
-    ])
-    
-    benchmark_all_priorities(test_data, K=3, num_trials=5)
 
