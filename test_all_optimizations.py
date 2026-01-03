@@ -10,6 +10,29 @@ This test compares:
 
 Tests report actual measured time and memory usage.
 Results are saved to a timestamped file.
+
+Usage Examples:
+    # 1. Test with custom data array and K
+    from test_all_optimizations import test_custom_input
+    import numpy as np
+    
+    data = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    K = 3
+    results = test_custom_input(data, K, num_trials=5)
+    
+    # Access results
+    print(f"Baseline time: {results['baseline']['avg_time']:.4f}s")
+    print(f"I1 speedup: {results['summary']['i1_speedup']:.2f}x")
+    
+    # 2. Command-line usage with CSV file
+    # CSV Format: Comma-separated values, can be single row or multiple rows
+    # Single row: 1.0,2.0,3.0,4.0,5.0
+    # Multiple rows: Will be flattened into 1D array
+    python test_all_optimizations.py data.csv 3 5
+    python test_all_optimizations.py "1,2,3,4,5,6,7,8" 2 3
+    
+    # 3. Default comprehensive test suite
+    python test_all_optimizations.py
 """
 
 import numpy as np
@@ -334,22 +357,171 @@ def generate_summary(results, baseline):
     return summary
 
 
+def test_custom_input(data, K, num_trials=5, save_output=True, output_file=None):
+    """
+    Test custom input data with specified K.
+    
+    This function runs ONLY the user-specified test and saves results to a file.
+    It does not run the default comprehensive test suite.
+    
+    Args:
+        data: numpy array, input data array
+        K: int, number of segments
+        num_trials: int, number of trials per implementation (default: 5)
+        save_output: bool, whether to save results to file (default: True)
+        output_file: str or None, output filename (if None, uses timestamp)
+    
+    Returns:
+        dict: Results dictionary containing:
+            - 'baseline': Original implementation results
+            - 'i1': Improvement 1 results
+            - 'i2': Improvement 2 results
+            - 'i1_i2': Combined I1+I2 results
+            - 'summary': Summary statistics
+            - 'output_file': Path to saved results file (if saved)
+    """
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
+    
+    n = len(data)
+    
+    if output_file is None and save_output:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Create outputs folder if it doesn't exist
+        outputs_dir = "outputs"
+        os.makedirs(outputs_dir, exist_ok=True)
+        output_file = os.path.join(outputs_dir, f"test_results_custom_{timestamp}.txt")
+    
+    f = None
+    if save_output:
+        f = open(output_file, 'w')
+        f.write(f"Optimization Test Results - Custom Input\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("="*70 + "\n\n")
+        f.write(f"Custom Input Test\n")
+        f.write(f"Data size: n={n}\n")
+        f.write(f"Number of segments: K={K}\n")
+        f.write(f"Number of trials per implementation: {num_trials}\n")
+        f.write("="*70 + "\n\n")
+    
+    # Run test suite (only this one test)
+    results = run_test_suite(data, K, num_trials=num_trials, output_file=f)
+    
+    if f:
+        # Add final summary
+        final = "\n" + "="*70 + "\n"
+        final += "TEST COMPLETE\n"
+        final += "="*70 + "\n"
+        final += f"\nResults saved to: {output_file}\n"
+        final += f"Test completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        final += "\nAll optimized implementations verified against original.\n"
+        final += "="*70 + "\n"
+        f.write(final)
+        f.close()
+        print(f"\n✅ Results saved to: {output_file}")
+    
+    # Organize results into dictionary
+    result_dict = {
+        'baseline': results[0],
+        'i1': results[1],
+        'i2': results[2],
+        'i1_i2': results[3],
+        'summary': {
+            'data_size': n,
+            'num_segments': K,
+            'num_trials': num_trials,
+            'baseline_time': results[0]['avg_time'],
+            'i1_time': results[1]['avg_time'],
+            'i2_time': results[2]['avg_time'],
+            'i1_i2_time': results[3]['avg_time'],
+            'i1_speedup': results[0]['avg_time'] / results[1]['avg_time'],
+            'i2_speedup': results[0]['avg_time'] / results[2]['avg_time'],
+            'i1_i2_speedup': results[0]['avg_time'] / results[3]['avg_time'],
+            'baseline_constraints': results[0]['num_constraints'],
+            'i1_constraints': results[1]['num_constraints'],
+            'i2_constraints': results[2]['num_constraints'],
+            'i1_i2_constraints': results[3]['num_constraints'],
+        }
+    }
+    
+    if save_output:
+        result_dict['output_file'] = output_file
+    
+    return result_dict
+
+
 def main():
     """
     Main test execution.
     
-    Runs comprehensive tests on multiple problem sizes and saves results.
+    Can be used in two ways:
+    1. Command-line: python test_all_optimizations.py [data_file] [K] [num_trials]
+    2. Direct call: test_custom_input(data, K, num_trials)
+    3. Default: Runs comprehensive test suite on multiple problem sizes
     """
+    # Check for command-line arguments
+    if len(sys.argv) > 1:
+        # Custom input mode
+        if len(sys.argv) >= 3:
+            try:
+                # Try to load data from file
+                data_file = sys.argv[1]
+                if os.path.exists(data_file):
+                    data = np.loadtxt(data_file, delimiter=',')
+                    # Flatten if multi-dimensional (handles both single row and multi-row CSVs)
+                    if data.ndim > 1:
+                        data = data.flatten()
+                    print(f"Loaded data from {data_file}: {len(data)} points")
+                else:
+                    # Try to parse as comma-separated values
+                    data = np.array([float(x) for x in data_file.split(',')])
+                    print(f"Parsed data from command line: {len(data)} points")
+                
+                K = int(sys.argv[2])
+                num_trials = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+                
+                print(f"Testing with K={K}, num_trials={num_trials}")
+                print("Running ONLY the specified custom test (not the comprehensive suite)...\n")
+                results = test_custom_input(data, K, num_trials=num_trials, save_output=True)
+                
+                # Print summary
+                print("\n" + "="*70)
+                print("QUICK SUMMARY")
+                print("="*70)
+                s = results['summary']
+                print(f"Baseline time: {s['baseline_time']:.4f}s")
+                print(f"I1 time: {s['i1_time']:.4f}s (speedup: {s['i1_speedup']:.2f}x)")
+                print(f"I2 time: {s['i2_time']:.4f}s (speedup: {s['i2_speedup']:.2f}x)")
+                print(f"I1+I2 time: {s['i1_i2_time']:.4f}s (speedup: {s['i1_i2_speedup']:.2f}x)")
+                print(f"\nConstraints: Baseline={s['baseline_constraints']}, "
+                      f"I1={s['i1_constraints']}, I2={s['i2_constraints']}, "
+                      f"I1+I2={s['i1_i2_constraints']}")
+                return results
+            except Exception as e:
+                print(f"Error: {e}")
+                print("\nUsage: python test_all_optimizations.py <data_file_or_array> <K> [num_trials]")
+                print("  Example: python test_all_optimizations.py data.csv 3 5")
+                print("  Example: python test_all_optimizations.py '1,2,3,4,5' 2 3")
+                return None
+        else:
+            print("Usage: python test_all_optimizations.py <data_file_or_array> <K> [num_trials]")
+            return None
+    
+    # Default: Run comprehensive test suite
     print("="*70)
     print("COMPREHENSIVE OPTIMIZATION TEST SUITE")
     print("="*70)
     print("\nThis test suite evaluates all optimization priority levels.")
     print("Results will be saved to a timestamped output file.")
+    print("\nFor custom input, use: python test_all_optimizations.py <data> <K> [num_trials]")
     print()
     
     # Create output file with timestamp
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_filename = f"test_results_{timestamp}.txt"
+    # Create outputs folder if it doesn't exist
+    outputs_dir = "outputs"
+    os.makedirs(outputs_dir, exist_ok=True)
+    output_filename = os.path.join(outputs_dir, f"test_results_{timestamp}.txt")
     
     print(f"Output file: {output_filename}\n")
     
