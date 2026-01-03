@@ -56,9 +56,9 @@ env/
 .ipynb_checkpoints
 
 # Output files
-outputs/
 *.txt
 !LICENCE
+!outputs/*.txt
 
 # LaTeX auxiliary files
 *.aux

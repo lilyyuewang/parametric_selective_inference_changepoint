@@ -1,0 +1,80 @@
+Optimization Test Results - Custom Input
+Generated: 2026-01-03 16:32:29
+======================================================================
+
+Custom Input Test
+Data size: n=200
+Number of segments: K=3
+Number of trials per implementation: 5
+======================================================================
+
+
+======================================================================
+TEST SUITE: All Optimization Improvement Levels
+======================================================================
+Data size: n=200
+Number of segments: K=3
+Number of trials per implementation: 5
+Test date: 2026-01-03 16:32:29
+======================================================================
+
+This test measures actual performance of each optimization level.
+
+======================================================================
+TEST 1: Original Implementation (Baseline)
+======================================================================
+This is the reference implementation. All optimizations will be
+compared against this baseline for correctness and performance.
+
+======================================================================
+TEST 2: Improvement 1 - Selective Constraint Storage
+======================================================================
+Optimization: Store only competitive alternative constraints
+Test mode: 'competitive' with 1% threshold
+Expected: Reduced number of constraints stored
+Expected: Reduced memory usage
+
+======================================================================
+TEST 3: Improvement 2 - Vectorization
+======================================================================
+Optimization: Vectorized SSE computation using NumPy
+Test mode: 'all' constraints for direct comparison
+Expected: Faster execution time
+Expected: Same constraints as original
+
+======================================================================
+TEST 4: I1+I2 Combined (All Optimizations)
+======================================================================
+Optimizations: Selective constraints + vectorization
+Expected: Maximum memory reduction and fastest execution
+Expected: Combines benefits of both improvements
+
+======================================================================
+SUMMARY: Performance Comparison
+======================================================================
+
+Implementation                      Time (s)        Speedup    Constraints  Memory (MB) 
+----------------------------------------------------------------------
+Original                             6.3289±0.8715   1.00×    20098         6133.73
+Improvement 1 (I1 - competitive 1%)  4.1297±0.0697   1.53×    228             69.89
+Improvement 2 (I2 - vectorized, all constraints)  5.9123±0.6128   1.07×    20098         6133.73
+I1+I2 Combined                       0.1418±0.0097  44.63×    228             69.89
+
+======================================================================
+Notes:
+- Time: Average ± standard deviation across trials
+- Speedup: Relative to original implementation
+- Constraints: Actual number stored
+- Memory: Estimated based on data structures
+- All optimized versions produce correct results
+======================================================================
+
+======================================================================
+TEST COMPLETE
+======================================================================
+
+Results saved to: test_results_custom_20260103_163229.txt
+Test completed: 2026-01-03 16:33:52
+
+All optimized implementations verified against original.
+======================================================================
